@@ -1,0 +1,40 @@
+workflows:
+  ios-build:
+    name: SmartPark iOS Build
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    instance_type: mac_mini_m2
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+    scripts:
+      - name: Set up Flutter
+        script: |
+          flutter pub get
+      - name: Set up environment
+        script: |
+          echo "GOOGLE_MAPS_API_KEY" >> codemagic_secrets
+      - name: Replace API keys
+        script: |
+          sed -i '' 's/YOUR_GOOGLE_MAPS_API_KEY/$GOOGLE_MAPS_API_KEY/g' ios/Runner/AppDelegate.swift
+          sed -i '' 's/YOUR_GOOGLE_MAPS_API_KEY/$GOOGLE_MAPS_API_KEY/g' android/app/src/main/AndroidManifest.xml
+      - name: Build iOS
+        script: |
+          flutter build ios --debug --no-codesign
+    artifacts:
+      - build/ios/iphoneos/Runner.app
+      - .env
+    publishing:
+      email:
+        recipients:
+          - user@example.com
