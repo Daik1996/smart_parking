@@ -1,0 +1,52 @@
+name: iOS Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build iOS IPA
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: 'stable'
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Replace API keys in iOS config
+        run: |
+          sed -i '' 's/YOUR_GOOGLE_MAPS_API_KEY/${{ secrets.GOOGLE_MAPS_API_KEY }}/g' ios/Runner/AppDelegate.swift
+        shell: bash
+
+      - name: Replace API keys in Android config
+        run: |
+          sed -i '' 's/YOUR_GOOGLE_MAPS_API_KEY/${{ secrets.GOOGLE_MAPS_API_KEY }}/g' android/app/src/main/AndroidManifest.xml
+        shell: bash
+
+      - name: Setup Firebase config files
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > android/app/google-services.json
+          echo "${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}" | base64 --decode > ios/Runner/GoogleService-Info.plist
+        shell: bash
+
+      - name: Build iOS no-codesign
+        run: flutter build ios --no-codesign --debug
+        shell: bash
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartPark-Debug
+          path: build/ios/iphoneos/Runner.app
+          compression-level: 9
