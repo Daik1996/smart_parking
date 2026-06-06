@@ -4,7 +4,7 @@ import 'config/app_config.dart';
 import 'screens/map_screen.dart';
 import 'services/location_service.dart';
 import 'services/parking_logic_service.dart';
-import 'services/firebase_service.dart';
+import 'services/local_storage_service.dart';
 import 'services/osm_service.dart';
 
 void main() {
@@ -21,10 +21,10 @@ class SmartParkApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final locationService = LocationService();
-    final firebaseService = FirebaseService();
+    final storageService = LocalStorageService();
     final osmService = OsmService();
     final parkingLogic = ParkingLogicService(
-      firebase: firebaseService,
+      storage: storageService,
       osm: osmService,
     );
 
@@ -47,7 +47,7 @@ class SmartParkApp extends StatelessWidget {
       home: MapScreen(
         locationService: locationService,
         parkingLogic: parkingLogic,
-        firebaseService: firebaseService,
+        storageService: storageService,
         osmService: osmService,
       ),
     );

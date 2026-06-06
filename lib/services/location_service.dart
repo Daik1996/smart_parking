@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math';
-import 'package:location/location.dart';
+import 'package:geolocator/geolocator.dart';
 import '../config/app_config.dart';
+
 class LocationResult {
   final double lat;
   final double lng;
@@ -29,9 +30,8 @@ enum DriverActivity {
 }
 
 class LocationService {
-  final Location _location = Location();
+  StreamSubscription<Position>? _subscription;
   bool _isRunning = false;
-  Timer? _timer;
   double? _previousLat;
   double? _previousLng;
   DateTime? _lastReportTime;
@@ -42,17 +42,16 @@ class LocationService {
   Stream<LocationResult>? get locationStream => _controller?.stream;
 
   Future<bool> requestPermissions() async {
-    bool serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await _location.requestService();
-      if (!serviceEnabled) return false;
-    }
+    final enabled = await Geolocator.isLocationServiceEnabled();
+    if (!enabled) return false;
 
-    PermissionStatus permissionGranted = await _location.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      permissionGranted = await _location.requestPermission();
-      if (permissionGranted != PermissionStatus.granted) return false;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return false;
     }
+    if (permission == LocationPermission.deniedForever) return false;
+
     return true;
   }
 
@@ -61,57 +60,46 @@ class LocationService {
     _isRunning = true;
     _controller = StreamController<LocationResult>.broadcast();
     _consecutiveErrors = 0;
-    _scheduleNextReport();
+
+    const settings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10,
+    );
+
+    _subscription = Geolocator.getPositionStream(locationSettings: settings).listen(
+      _onPosition,
+      onError: (e) => _handleError('GPS error: $e'),
+    );
   }
 
-  void _scheduleNextReport() {
-    _timer?.cancel();
-    _timer = Timer(AppConfig.reportInterval, _performReport);
-  }
+  void _onPosition(Position pos) {
+    final lat = pos.latitude;
+    final lng = pos.longitude;
+    final speed = pos.speed * 3.6;
+    final accuracy = pos.accuracy;
+    final isAccurate = accuracy < AppConfig.maxGpsDriftMeters;
+    final now = DateTime.now();
 
-  Future<void> _performReport() async {
-    if (!_isRunning) return;
-    try {
-      final data = await _location.getLocation();
-      if (data.latitude == null || data.longitude == null) {
-        _handleError('GPS sin datos');
-        return;
-      }
+    _consecutiveErrors = 0;
 
-      final lat = data.latitude!;
-      final lng = data.longitude!;
-      final speed = (data.speed ?? 0.0) * 3.6;
-      final accuracy = data.accuracy ?? 999.0;
-      final isAccurate = accuracy < AppConfig.maxGpsDriftMeters;
-      final now = DateTime.now();
+    final result = LocationResult(
+      lat: lat,
+      lng: lng,
+      speed: speed,
+      activity: _inferActivity(speed, lat, lng),
+      isAccurate: isAccurate,
+      timestamp: now,
+    );
 
-      _consecutiveErrors = 0;
-
-      if (isAccurate) {
-        _lastAccurateLocation = LocationResult(
-          lat: lat,
-          lng: lng,
-          speed: speed,
-          activity: _inferActivity(speed, lat, lng),
-          isAccurate: true,
-          timestamp: now,
-        );
-
-        _controller?.add(_lastAccurateLocation!);
-      } else {
-        _handleError('GPS impreciso: $accuracy m');
-        if (_lastAccurateLocation != null) {
-          _controller?.add(_lastAccurateLocation!);
-        }
-      }
-
-      _previousLat = lat;
-      _previousLng = lng;
-      _lastReportTime = now;
-    } catch (e) {
-      _handleError('Error GPS: $e');
+    if (isAccurate) {
+      _lastAccurateLocation = result;
     }
-    _scheduleNextReport();
+
+    _controller?.add(result);
+
+    _previousLat = lat;
+    _previousLng = lng;
+    _lastReportTime = now;
   }
 
   DriverActivity _inferActivity(double speedKmh, double lat, double lng) {
@@ -159,8 +147,8 @@ class LocationService {
 
   void stopMonitoring() {
     _isRunning = false;
-    _timer?.cancel();
-    _timer = null;
+    _subscription?.cancel();
+    _subscription = null;
     _controller?.close();
     _controller = null;
   }

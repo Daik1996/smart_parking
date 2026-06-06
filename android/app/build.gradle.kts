@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
-    id("com.google.gms.google-services")
 }
 
 android {
@@ -37,10 +36,4 @@ kotlin {
 
 flutter {
     source = "../.."
-}
-
-dependencies {
-    implementation(platform("com.google.firebase:firebase-bom:32.7.4"))
-    implementation("com.google.firebase:firebase-analytics")
-    implementation("com.google.android.gms:play-services-location:21.3.0")
 }

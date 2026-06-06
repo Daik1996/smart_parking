@@ -1,11 +1,11 @@
 {
-    "name": "smart_parking",
-    "short_name": "smart_parking",
+    "name": "SmartPark",
+    "short_name": "SmartPark",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#1A1A2E",
+    "theme_color": "#1A1A2E",
+    "description": "Detecta plazas de aparcamiento libres en Madrid mediante GPS anónimo.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -1,9 +1,8 @@
 import 'dart:async';
 import '../config/app_config.dart';
 import '../models/anonymous_session.dart';
-import '../models/parking_spot.dart';
 import 'location_service.dart';
-import 'firebase_service.dart';
+import 'local_storage_service.dart';
 import 'osm_service.dart';
 
 enum StateTransitionResult {
@@ -15,7 +14,7 @@ enum StateTransitionResult {
 }
 
 class ParkingLogicService {
-  final FirebaseService _firebase;
+  final LocalStorageService _storage;
   final OsmService _osm;
 
   AnonymousSession? _session;
@@ -27,9 +26,9 @@ class ParkingLogicService {
   Stream<ParkingEvent>? get events => _eventController?.stream;
 
   ParkingLogicService({
-    required FirebaseService firebase,
+    required LocalStorageService storage,
     required OsmService osm,
-  }) : _firebase = firebase, _osm = osm;
+  }) : _storage = storage, _osm = osm;
 
   Future<void> startSession() async {
     _session = AnonymousSession.create();
@@ -37,7 +36,6 @@ class ParkingLogicService {
     _stationaryWindow.clear();
     _eventController = StreamController<ParkingEvent>.broadcast();
     _startCleanupTimer();
-    await _firebase.initializeAnonymousSession();
   }
 
   Future<StateTransitionResult> processLocation(LocationResult location) async {
@@ -111,7 +109,7 @@ class ParkingLogicService {
           return StateTransitionResult.none;
         }
 
-        final existingSpot = await _firebase.findSpotNear(location.lat, location.lng);
+        final existingSpot = await _storage.findSpotNear(location.lat, location.lng);
         if (existingSpot != null && existingSpot.isOccupied) {
           _session!.stationaryReports = 0;
           return StateTransitionResult.none;
@@ -134,19 +132,7 @@ class ParkingLogicService {
     final spotId = _generateSpotId(location.lat, location.lng);
     _session!.currentSpotId = spotId;
 
-    final now = DateTime.now();
-    final spot = ParkingSpot(
-      id: spotId,
-      lat: location.lat,
-      lng: location.lng,
-      status: SpotStatus.occupied,
-      detectedFreeAt: now,
-      detectedOccupiedAt: now,
-      expiresAt: now.add(AppConfig.occupiedSpotExpiry),
-      streetName: '',
-    );
-
-    await _firebase.saveSpot(spot);
+    await _storage.reportSpotOccupied(location.lat, location.lng);
     _publishEvent(ParkingEvent(DriverState.parked, 'Coche aparcado aquí', location, spotId: spotId));
 
     return StateTransitionResult.spotOccupied;
@@ -157,30 +143,16 @@ class ParkingLogicService {
     if (_session!.currentSpotId == null) return StateTransitionResult.none;
 
     final oldSpotId = _session!.currentSpotId;
-    final now = DateTime.now();
 
-    final freeSpot = ParkingSpot(
-      id: _generateSpotId(location.lat, location.lng),
-      lat: location.lat,
-      lng: location.lng,
-      status: SpotStatus.free,
-      detectedFreeAt: now,
-      detectedOccupiedAt: now,
-      expiresAt: now.add(AppConfig.freeSpotExpiry),
-      streetName: '',
-    );
-
-    await _firebase.saveSpot(freeSpot);
-    try {
-      await _firebase.removeSpot(oldSpotId!);
-    } catch (_) {}
+    await _storage.reportSpotFree(location.lat, location.lng);
+    await _storage.removeSpot(oldSpotId!);
 
     _session!.currentState = DriverState.left;
     _session!.currentSpotId = null;
     _session!.parkedSince = null;
     _session!.stationaryReports = 0;
 
-    _publishEvent(ParkingEvent(DriverState.left, 'Plaza libre disponible', location, spotId: freeSpot.id));
+    _publishEvent(ParkingEvent(DriverState.left, 'Plaza libre disponible', location, spotId: _generateSpotId(location.lat, location.lng)));
 
     return StateTransitionResult.spotFreed;
   }
@@ -198,7 +170,7 @@ class ParkingLogicService {
   void _startCleanupTimer() {
     _cleanupTimer = Timer.periodic(const Duration(minutes: 5), (_) async {
       try {
-        await _firebase.cleanupExpiredSpots();
+        await _storage.cleanupExpiredSpots();
       } catch (_) {}
     });
   }
@@ -210,9 +182,7 @@ class ParkingLogicService {
     _stationaryWindow.clear();
 
     if (_session?.currentSpotId != null) {
-      try {
-        _firebase.removeSpot(_session!.currentSpotId!);
-      } catch (_) {}
+      _storage.removeSpot(_session!.currentSpotId!);
     }
 
     _session = null;

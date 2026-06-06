@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import '../config/app_config.dart';
 import '../models/parking_spot.dart';
 import '../services/location_service.dart';
 import '../services/parking_logic_service.dart';
-import '../services/firebase_service.dart';
+import '../services/local_storage_service.dart';
 import '../services/osm_service.dart';
 import '../widgets/legend_widget.dart';
 import '../widgets/info_panel.dart';
@@ -12,14 +13,14 @@ import '../widgets/info_panel.dart';
 class MapScreen extends StatefulWidget {
   final LocationService locationService;
   final ParkingLogicService parkingLogic;
-  final FirebaseService firebaseService;
+  final LocalStorageService storageService;
   final OsmService osmService;
 
   const MapScreen({
     super.key,
     required this.locationService,
     required this.parkingLogic,
-    required this.firebaseService,
+    required this.storageService,
     required this.osmService,
   });
 
@@ -28,16 +29,15 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  final Set<Marker> _markers = {};
-  final CameraPosition _initialPosition = const CameraPosition(
-    target: LatLng(40.4168, -3.7038),
-    zoom: 15,
-  );
+  final MapController _mapController = MapController();
+  final List<Marker> _markers = [];
+  final LatLng _madrid = const LatLng(40.4168, -3.7038);
 
   bool _isMonitoring = false;
   String _statusText = 'Iniciar monitoreo';
   String _sessionState = 'Esperando...';
   bool _showLegend = false;
+  LatLng? _currentPosition;
 
   @override
   void initState() {
@@ -47,9 +47,11 @@ class _MapScreenState extends State<MapScreen> {
 
   void _setupListeners() {
     widget.parkingLogic.events?.listen((event) {
-      setState(() {
-        _sessionState = event.message;
-      });
+      if (mounted) {
+        setState(() {
+          _sessionState = event.message;
+        });
+      }
     });
   }
 
@@ -74,6 +76,9 @@ class _MapScreenState extends State<MapScreen> {
     });
 
     widget.locationService.locationStream?.listen((location) async {
+      final pos = LatLng(location.lat, location.lng);
+      _currentPosition = pos;
+
       final result = await widget.parkingLogic.processLocation(location);
       if (result == StateTransitionResult.spotFreed) {
         _addMarker(location.lat, location.lng, SpotStatus.free);
@@ -98,7 +103,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _refreshSpots(double lat, double lng) async {
-    final spots = await widget.firebaseService.getNearbySpots(lat, lng);
+    final spots = await widget.storageService.getNearbySpots(lat, lng);
 
     setState(() {
       _markers.clear();
@@ -109,19 +114,43 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _addMarker(double lat, double lng, SpotStatus status, {String? spotId}) {
+    final color = status == SpotStatus.free
+      ? AppConfig.colorFree
+      : AppConfig.colorOccupied;
+
     final marker = Marker(
-      markerId: MarkerId('${spotId ?? ''}_${lat}_$lng'),
-      position: LatLng(lat, lng),
-      icon: BitmapDescriptor.defaultMarkerWithHue(
-        status == SpotStatus.free ? BitmapDescriptor.hueGreen : BitmapDescriptor.hueRed,
+      point: LatLng(lat, lng),
+      width: 80,
+      height: 80,
+      child: GestureDetector(
+        onTap: () => _showSpotInfo(lat, lng, status, spotId),
+        child: Container(
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.9),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.4),
+                blurRadius: 8,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+          child: Icon(
+            status == SpotStatus.free ? Icons.check : Icons.close,
+            color: Colors.white,
+            size: 30,
+          ),
+        ),
       ),
-      onTap: () => _showSpotInfo(lat, lng, status, spotId),
     );
 
-    setState(() {
-      _markers.removeWhere((m) => m.markerId == marker.markerId);
-      _markers.add(marker);
+    _markers.removeWhere((m) {
+      final mPos = m.point;
+      return (mPos.latitude - lat).abs() < 0.001 && (mPos.longitude - lng).abs() < 0.001;
     });
+    _markers.add(marker);
   }
 
   void _showSpotInfo(double lat, double lng, SpotStatus status, String? spotId) async {
@@ -143,10 +172,9 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _onConfirmFreeSpot(double lat, double lng) async {
-    await widget.firebaseService.reportSpotFree(lat, lng);
-    if (!mounted) return;
+    await widget.storageService.reportSpotFree(lat, lng);
     _addMarker(lat, lng, SpotStatus.free);
-    Navigator.of(context).pop();
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -165,14 +193,38 @@ class _MapScreenState extends State<MapScreen> {
       ),
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: _initialPosition,
-            markers: _markers,
-            myLocationEnabled: _isMonitoring,
-            myLocationButtonEnabled: _isMonitoring,
-            onMapCreated: (controller) {},
-            onTap: (latLng) => _showSpotInfo(latLng.latitude, latLng.longitude, SpotStatus.free, null),
-            style: _darkMapStyle,
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _madrid,
+              initialZoom: 14,
+              onTap: (tapPos, latLng) => _showSpotInfo(latLng.latitude, latLng.longitude, SpotStatus.free, null),
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.smart_parking',
+              ),
+              MarkerLayer(markers: _markers),
+              if (_currentPosition != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _currentPosition!,
+                      width: 40,
+                      height: 40,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withValues(alpha: 0.9),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                        ),
+                        child: const Icon(Icons.navigation, color: Colors.white, size: 20),
+                      ),
+                    ),
+                  ],
+                ),
+            ],
           ),
           if (_showLegend) const Positioned(
             top: 16,
@@ -214,40 +266,3 @@ class _MapScreenState extends State<MapScreen> {
     super.dispose();
   }
 }
-
-const String _darkMapStyle = '''
-[
-  {
-    "elementType": "geometry",
-    "stylers": [{ "color": "#242f3e" }]
-  },
-  {
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#746855" }]
-  },
-  {
-    "elementType": "labels.text.stroke",
-    "stylers": [{ "color": "#242f3e" }]
-  },
-  {
-    "featureType": "road",
-    "elementType": "geometry",
-    "stylers": [{ "color": "#38414e" }]
-  },
-  {
-    "featureType": "road",
-    "elementType": "geometry.stroke",
-    "stylers": [{ "color": "#212a37" }]
-  },
-  {
-    "featureType": "road",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#9ca5b3" }]
-  },
-  {
-    "featureType": "water",
-    "elementType": "geometry",
-    "stylers": [{ "color": "#17263c" }]
-  }
-]
-''';
