@@ -156,16 +156,19 @@ class _MapScreenState extends State<MapScreen> {
           ),
           children: [
             ColorFiltered(
-              colorFilter: const ColorFilter.matrix(<double>[
-                0.5, 0, 0, 0, 0,
-                0, 0.5, 0, 0, 0,
-                0, 0, 0.5, 0, 0,
-                0, 0, 0, 0.8, 0,
-              ]),
-              child: TileLayer(
-                urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
-                subdomains: const ['a', 'b', 'c', 'd'],
-                userAgentPackageName: 'com.example.smart_parking',
+              colorFilter: ColorFilter.mode(Colors.black.withValues(alpha: 0.45), BlendMode.multiply),
+              child: ColorFiltered(
+                colorFilter: const ColorFilter.matrix(<double>[
+                  0.35, 0, 0, 0, 0,
+                  0, 0.35, 0, 0, 0,
+                  0, 0, 0.35, 0, 0,
+                  0, 0, 0, 1, 0,
+                ]),
+                child: TileLayer(
+                  urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+                  subdomains: const ['a', 'b', 'c', 'd'],
+                  userAgentPackageName: 'com.example.smart_parking',
+                ),
               ),
             ),
             MarkerLayer(markers: _zoneMarkers),
