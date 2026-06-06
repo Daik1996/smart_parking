@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -32,6 +33,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   final List<Marker> _markers = [];
+  final List<Marker> _zoneMarkers = [];
   final LatLng _madrid = const LatLng(40.4168, -3.7038);
 
   bool _isMonitoring = false;
@@ -47,6 +49,29 @@ class _MapScreenState extends State<MapScreen> {
     widget.parkingLogic.events?.listen((e) {
       if (mounted) setState(() => _sessionMsg = e.message);
     });
+    _loadParkingZones();
+  }
+
+  Future<void> _loadParkingZones() async {
+    final zones = await widget.osmService.getParkingZones(40.4168, -3.7038, radius: 0.01);
+    if (!mounted) return;
+    for (final z in zones) {
+      _zoneMarkers.add(Marker(
+        point: LatLng(z.lat, z.lng),
+        width: 28, height: 28,
+        child: Container(
+          decoration: BoxDecoration(
+            color: z.canPark
+              ? AppConfig.colorFree.withValues(alpha: 0.55)
+              : AppConfig.colorOccupied.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1.5),
+          ),
+          child: Icon(z.canPark ? Icons.local_parking : Icons.block, color: Colors.white, size: 16),
+        ),
+      ));
+    }
+    setState(() {});
   }
 
   Future<void> _toggleMonitoring() async {
@@ -130,10 +155,20 @@ class _MapScreenState extends State<MapScreen> {
             onTap: (_, ll) => _showSpotInfo(ll.latitude, ll.longitude, SpotStatus.free),
           ),
           children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.example.smart_parking',
+            ColorFiltered(
+              colorFilter: const ColorFilter.matrix(<double>[
+                0.5, 0, 0, 0, 0,
+                0, 0.5, 0, 0, 0,
+                0, 0, 0.5, 0, 0,
+                0, 0, 0, 0.8, 0,
+              ]),
+              child: TileLayer(
+                urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+                subdomains: const ['a', 'b', 'c', 'd'],
+                userAgentPackageName: 'com.example.smart_parking',
+              ),
             ),
+            MarkerLayer(markers: _zoneMarkers),
             MarkerLayer(markers: _markers),
             if (_currentPosition != null)
               MarkerLayer(markers: [
