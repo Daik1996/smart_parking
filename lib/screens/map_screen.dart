@@ -147,37 +147,29 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(children: [
-        FlutterMap(
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: _madrid,
-            initialZoom: 15,
-            onTap: (_, ll) => _showSpotInfo(ll.latitude, ll.longitude, SpotStatus.free),
-          ),
-          children: [
-            ColorFiltered(
-              colorFilter: ColorFilter.mode(Colors.black.withValues(alpha: 0.45), BlendMode.multiply),
-              child: ColorFiltered(
-                colorFilter: const ColorFilter.matrix(<double>[
-                  0.35, 0, 0, 0, 0,
-                  0, 0.35, 0, 0, 0,
-                  0, 0, 0.35, 0, 0,
-                  0, 0, 0, 1, 0,
-                ]),
-                child: TileLayer(
-                  urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
-                  subdomains: const ['a', 'b', 'c', 'd'],
-                  userAgentPackageName: 'com.example.smart_parking',
-                ),
-              ),
+        RepaintBoundary(
+          child: FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _madrid,
+              initialZoom: 15,
+              maxZoom: 18,
+              minZoom: 12,
+              onTap: (_, ll) => _showSpotInfo(ll.latitude, ll.longitude, SpotStatus.free),
             ),
-            MarkerLayer(markers: _zoneMarkers),
-            MarkerLayer(markers: _markers),
-            if (_currentPosition != null)
-              MarkerLayer(markers: [
-                Marker(point: _currentPosition!, width: 28, height: 28, child: _currentLocDot()),
-              ]),
-          ],
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.smart_parking',
+                maxZoom: 19,
+              ),
+              MarkerLayer(markers: _markers),
+              if (_currentPosition != null)
+                MarkerLayer(markers: [
+                  Marker(point: _currentPosition!, width: 28, height: 28, child: _currentLocDot()),
+                ]),
+            ],
+          ),
         ),
         _topBar(),
         if (_showLegend) const Positioned(top: 110, left: 14, child: LegendWidget()),
