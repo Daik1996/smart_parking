@@ -4,13 +4,9 @@ import '../models/parking_spot.dart';
 
 class ParkingMarker extends StatefulWidget {
   final SpotStatus status;
-  final double size;
+  final VoidCallback? onTap;
 
-  const ParkingMarker({
-    super.key,
-    required this.status,
-    this.size = 40,
-  });
+  const ParkingMarker({super.key, required this.status, this.onTap});
 
   @override
   State<ParkingMarker> createState() => _ParkingMarkerState();
@@ -18,85 +14,94 @@ class ParkingMarker extends StatefulWidget {
 
 class _ParkingMarkerState extends State<ParkingMarker>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
+  late AnimationController _pulseCtrl;
+  late AnimationController _glowCtrl;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    );
+    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1500));
+    _glowCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 2000));
 
     if (widget.status == SpotStatus.free) {
-      _controller.repeat(reverse: true);
+      _pulseCtrl.repeat(reverse: true);
+      _glowCtrl.repeat(reverse: true);
     }
   }
 
   @override
-  void didUpdateWidget(ParkingMarker oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.status != oldWidget.status) {
+  void didUpdateWidget(ParkingMarker old) {
+    super.didUpdateWidget(old);
+    if (widget.status != old.status) {
       if (widget.status == SpotStatus.free) {
-        _controller.repeat(reverse: true);
+        _pulseCtrl.repeat(reverse: true);
+        _glowCtrl.repeat(reverse: true);
       } else {
-        _controller.stop();
+        _pulseCtrl.stop();
+        _glowCtrl.stop();
       }
     }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _pulseCtrl.dispose();
+    _glowCtrl.dispose();
     super.dispose();
   }
 
   Color get _color {
     switch (widget.status) {
-      case SpotStatus.free:
-        return AppConfig.colorFree;
-      case SpotStatus.occupied:
-        return AppConfig.colorOccupied;
-      case SpotStatus.expired:
-        return AppConfig.colorExpired;
-      case SpotStatus.unknown:
-        return AppConfig.colorWarning;
+      case SpotStatus.free: return AppConfig.colorFree;
+      case SpotStatus.occupied: return AppConfig.colorOccupied;
+      case SpotStatus.expired: return AppConfig.colorExpired;
+      case SpotStatus.unknown: return AppConfig.colorWarning;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final scale = widget.status == SpotStatus.free
-          ? 1.0 + (_controller.value * 0.3)
-          : 1.0;
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_pulseCtrl, _glowCtrl]),
+        builder: (context, _) {
+          final isFree = widget.status == SpotStatus.free;
+          final pulse = isFree ? _pulseCtrl.value : 0.0;
+          final glow = isFree ? _glowCtrl.value : 0.0;
 
-        return Transform.scale(
-          scale: scale,
-          child: Container(
-            width: widget.size,
-            height: widget.size,
+          return Container(
+            width: 60,
+            height: 44,
             decoration: BoxDecoration(
-              color: _color.withValues(alpha: 0.85),
-              shape: BoxShape.circle,
+              color: _color.withValues(alpha: 0.85 + pulse * 0.1),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
+                bottomLeft: Radius.circular(6),
+                bottomRight: Radius.circular(6),
+              ),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.7 + glow * 0.3),
+                width: 2.5,
+              ),
               boxShadow: [
                 BoxShadow(
-                  color: _color.withValues(alpha: 0.4),
-                  blurRadius: 8,
-                  spreadRadius: 2,
+                  color: _color.withValues(alpha: 0.3 + glow * 0.4),
+                  blurRadius: 8 + glow * 8,
+                  spreadRadius: 1 + glow * 3,
                 ),
               ],
             ),
-            child: Icon(
-              widget.status == SpotStatus.free ? Icons.check : Icons.close,
-              color: Colors.white,
-              size: widget.size * 0.5,
+            child: const Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.directions_car, color: Colors.white, size: 22),
+              ],
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
