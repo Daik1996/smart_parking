@@ -146,33 +146,32 @@ class _MapScreenState extends State<MapScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(children: [
-        RepaintBoundary(
-          child: FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _madrid,
-              initialZoom: 15,
-              maxZoom: 18,
-              minZoom: 12,
-              onTap: (_, ll) => _showSpotInfo(ll.latitude, ll.longitude, SpotStatus.free),
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.smart_parking',
-                maxZoom: 19,
+      body: Column(children: [
+        Expanded(
+          child: Stack(children: [
+            FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _madrid,
+                initialZoom: 14,
+                onTap: (_, ll) => _showSpotInfo(ll.latitude, ll.longitude, SpotStatus.free),
               ),
-              MarkerLayer(markers: _markers),
-              if (_currentPosition != null)
-                MarkerLayer(markers: [
-                  Marker(point: _currentPosition!, width: 28, height: 28, child: _currentLocDot()),
-                ]),
-            ],
-          ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png',
+                  maxZoom: 18,
+                ),
+                MarkerLayer(markers: _markers),
+                if (_currentPosition != null)
+                  MarkerLayer(markers: [
+                    Marker(point: _currentPosition!, width: 28, height: 28, child: _currentLocDot()),
+                  ]),
+              ],
+            ),
+            _topBar(),
+            if (_showLegend) const Positioned(top: 110, left: 14, child: LegendWidget()),
+          ]),
         ),
-        _topBar(),
-        if (_showLegend) const Positioned(top: 110, left: 14, child: LegendWidget()),
         _bottomPanel(),
       ]),
     );
@@ -237,10 +236,8 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _bottomPanel() {
-    return Positioned(
-      bottom: 0, left: 0, right: 0,
-      child: Container(
-        padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).padding.bottom + 16),
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).padding.bottom + 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [AppConfig.colorBackground.withValues(alpha: 0), AppConfig.colorBackground.withValues(alpha: 0.95)],
@@ -281,10 +278,9 @@ class _MapScreenState extends State<MapScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                 elevation: 8,
               ),
+              ),
             ),
-          ),
-        ]),
-      ),
+          ]),
     );
   }
 
