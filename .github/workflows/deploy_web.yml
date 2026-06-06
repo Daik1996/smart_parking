@@ -25,11 +25,12 @@ jobs:
           flutter-version: '3.44.0'
           channel: 'stable'
 
-      - name: Build web
-        run: flutter build web --release
-
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        id: pages-config
+
+      - name: Build web
+        run: flutter build web --release --base-href "${{ steps.pages-config.outputs.base_path }}/"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
