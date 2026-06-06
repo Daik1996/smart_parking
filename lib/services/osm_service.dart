@@ -66,10 +66,37 @@ class ParkingPolygon {
   });
 }
 
+class StreetParking {
+  final String id;
+  final List<LatLng> points;
+  final String streetName;
+  final bool canPark;
+  final bool isPaid;
+  final bool isPermitOnly;
+  final bool isDisabled;
+  final bool isLoadingZone;
+  final bool isNoParking;
+  final String? maxStay;
+
+  StreetParking({
+    required this.id,
+    required this.points,
+    required this.streetName,
+    required this.canPark,
+    this.isPaid = false,
+    this.isPermitOnly = false,
+    this.isDisabled = false,
+    this.isLoadingZone = false,
+    this.isNoParking = false,
+    this.maxStay,
+  });
+}
+
 class OsmService {
   final Map<String, OsmRestriction> _cache = {};
   final Map<String, List<ParkingZone>> _zoneCache = {};
   final Map<String, List<ParkingPolygon>> _polygonCache = {};
+  final Map<String, List<StreetParking>> _streetCache = {};
   DateTime _lastCacheCleanup = DateTime.now();
 
   Future<OsmRestriction> getRestriction(double lat, double lng) async {
@@ -167,6 +194,89 @@ class OsmService {
 
       _polygonCache[key] = polygons;
       return polygons;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<List<StreetParking>> getStreetParking(double lat, double lng, {double radiusMeters = 300}) async {
+    final key = '${(lat * 1000).round()}_${(lng * 1000).round()}';
+    if (_streetCache.containsKey(key)) return _streetCache[key]!;
+
+    try {
+      final query = '''
+        [out:json][timeout:20];
+        (
+          way(around:$radiusMeters,$lat,$lng)["highway"~"^(residential|tertiary|secondary|primary|service|unclassified|living_street)\$"](if: t["parking:condition:both"] != null || t["parking:condition:right"] != null || t["parking:condition:left"] != null || t["parking:lane:both"] != null || t["parking:lane:right"] != null || t["parking:lane:left"] != null || t["no_parking"] != null);
+        );
+        out geom;
+      ''';
+
+      final response = await http.post(
+        Uri.parse(AppConfig.osmBaseUrl),
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: {'data': query},
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode != 200) return [];
+
+      final data = jsonDecode(response.body);
+      final elements = data['elements'] as List? ?? [];
+      final result = <StreetParking>[];
+
+      for (final el in elements) {
+        final tags = el['tags'] as Map<String, dynamic>? ?? {};
+        final geometry = el['geometry'] as List?;
+        if (geometry == null || geometry.length < 2) continue;
+
+        final points = geometry.map((g) => LatLng(
+          (g['lat'] as num).toDouble(),
+          (g['lon'] as num).toDouble(),
+        )).toList();
+
+        if (points.length > 30) {
+          final step = (points.length / 30).ceil();
+          final simplified = <LatLng>[];
+          for (int i = 0; i < points.length; i += step) {
+            simplified.add(points[i]);
+          }
+          simplified.add(points.last);
+          points
+            ..clear()
+            ..addAll(simplified);
+        }
+
+        final conditionBoth = tags['parking:condition:both'] as String?;
+        final conditionRight = tags['parking:condition:right'] as String?;
+        final conditionLeft = tags['parking:condition:left'] as String?;
+        final noParking = tags['no_parking'] as String?;
+        final name = tags['name'] as String? ?? 'Calle sin nombre';
+        final id = 'way_${el['id']}';
+
+        final condition = conditionBoth ?? conditionRight ?? conditionLeft;
+
+        if (noParking == 'yes' || noParking == 'street') {
+          result.add(StreetParking(id: id, points: points, streetName: name, canPark: false, isNoParking: true));
+        } else if (condition == 'ticket' || condition == 'fee' || condition == 'paid') {
+          result.add(StreetParking(id: id, points: points, streetName: name, canPark: true, isPaid: true));
+        } else if (condition == 'residents' || condition == 'permit') {
+          result.add(StreetParking(id: id, points: points, streetName: name, canPark: false, isPermitOnly: true));
+        } else if (condition == 'disabled') {
+          result.add(StreetParking(id: id, points: points, streetName: name, canPark: false, isDisabled: true));
+        } else if (condition == 'loading') {
+          result.add(StreetParking(id: id, points: points, streetName: name, canPark: false, isLoadingZone: true));
+        } else if (condition == 'maxstay') {
+          final ms = tags['parking:condition:both:maxstay'] as String?
+            ?? tags['parking:condition:right:maxstay'] as String?
+            ?? '2 hours';
+          result.add(StreetParking(id: id, points: points, streetName: name, canPark: true, maxStay: ms));
+        } else if (condition == 'free' || condition == null) {
+          result.add(StreetParking(id: id, points: points, streetName: name, canPark: true));
+        }
+      }
+
+      _streetCache[key] = result;
+      return result;
     } catch (e) {
       return [];
     }
@@ -314,10 +424,10 @@ class OsmService {
 
   void _cleanupCacheIfNeeded() {
     if (DateTime.now().difference(_lastCacheCleanup).inMinutes > 15) {
-      _cache.clear(); _zoneCache.clear(); _polygonCache.clear();
+      _cache.clear(); _zoneCache.clear(); _polygonCache.clear(); _streetCache.clear();
       _lastCacheCleanup = DateTime.now();
     }
   }
 
-  void dispose() { _cache.clear(); _zoneCache.clear(); _polygonCache.clear(); }
+  void dispose() { _cache.clear(); _zoneCache.clear(); _polygonCache.clear(); _streetCache.clear(); }
 }

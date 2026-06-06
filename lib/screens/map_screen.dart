@@ -33,6 +33,7 @@ class _MapScreenState extends State<MapScreen> {
   LocationResult? _currentLocation;
   List<Marker> _markers = [];
   List<Polygon> _parkingPolygons = [];
+  List<Polyline> _streetParkingLines = [];
   int _freeCount = 0;
   int _occupiedCount = 0;
   bool _isMonitoring = false;
@@ -61,11 +62,10 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _loadParkingZones() async {
     if (_currentLocation == null) return;
-    final polygons = await widget.osmService.getParkingPolygons(
-      _currentLocation!.lat,
-      _currentLocation!.lng,
-      radiusMeters: 500,
-    );
+    final lat = _currentLocation!.lat;
+    final lng = _currentLocation!.lng;
+    final polygons = await widget.osmService.getParkingPolygons(lat, lng, radiusMeters: 500);
+    final streets = await widget.osmService.getStreetParking(lat, lng, radiusMeters: 300);
     setState(() {
       _parkingPolygons = polygons.map((p) {
         final isPaid = p.condition == 'paid';
@@ -91,6 +91,31 @@ class _MapScreenState extends State<MapScreen> {
           color: fillColor,
           borderColor: borderColor,
           borderStrokeWidth: 2,
+        );
+      }).toList();
+      _streetParkingLines = streets.map((s) {
+        Color color;
+        double width;
+        if (s.isNoParking) {
+          color = AppConfig.colorOccupied;
+          width = 3;
+        } else if (s.isPaid) {
+          color = AppConfig.colorWarning;
+          width = 4;
+        } else if (s.isPermitOnly || s.isDisabled || s.isLoadingZone) {
+          color = Colors.orange.withValues(alpha: 0.8);
+          width = 3;
+        } else if (s.maxStay != null) {
+          color = Colors.teal;
+          width = 4;
+        } else {
+          color = AppConfig.colorFree;
+          width = 5;
+        }
+        return Polyline(
+          points: s.points,
+          color: color,
+          strokeWidth: width,
         );
       }).toList();
     });
@@ -177,6 +202,8 @@ class _MapScreenState extends State<MapScreen> {
             ),
             if (_parkingPolygons.isNotEmpty)
               PolygonLayer(polygons: _parkingPolygons),
+            if (_streetParkingLines.isNotEmpty)
+              PolylineLayer(polylines: _streetParkingLines),
             MarkerLayer(markers: _markers),
             if (_currentLocation != null)
               MarkerLayer(markers: [
