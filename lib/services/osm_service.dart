@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:latlong2/latlong.dart';
 import '../config/app_config.dart';
 
 class OsmRestriction {
@@ -47,9 +48,28 @@ class ParkingZone {
   ParkingZone({required this.lat, required this.lng, required this.canPark, required this.condition});
 }
 
+class ParkingPolygon {
+  final String id;
+  final List<LatLng> points;
+  final String type;
+  final String? condition;
+  final bool canPark;
+  final String? name;
+
+  ParkingPolygon({
+    required this.id,
+    required this.points,
+    required this.type,
+    this.condition,
+    required this.canPark,
+    this.name,
+  });
+}
+
 class OsmService {
   final Map<String, OsmRestriction> _cache = {};
   final Map<String, List<ParkingZone>> _zoneCache = {};
+  final Map<String, List<ParkingPolygon>> _polygonCache = {};
   DateTime _lastCacheCleanup = DateTime.now();
 
   Future<OsmRestriction> getRestriction(double lat, double lng) async {
@@ -67,6 +87,89 @@ class OsmService {
   Future<bool> canParkHere(double lat, double lng) async {
     final restriction = await getRestriction(lat, lng);
     return restriction.isLegalToPark;
+  }
+
+  Future<List<ParkingPolygon>> getParkingPolygons(double lat, double lng, {double radiusMeters = 500}) async {
+    final key = '${(lat * 1000).round()}_${(lng * 1000).round()}';
+    if (_polygonCache.containsKey(key)) return _polygonCache[key]!;
+
+    try {
+      final query = '''
+        [out:json][timeout:15];
+        (
+          way(around:$radiusMeters,$lat,$lng)["amenity"="parking"];
+          relation(around:$radiusMeters,$lat,$lng)["amenity"="parking"];
+          way(around:$radiusMeters,$lat,$lng)["highway"="pedestrian"](if: t["area"] == "yes");
+          way(around:$radiusMeters,$lat,$lng)["parking"](if: t["parking"] == "surface" || t["parking"] == "multi-storey" || t["parking"] == "underground");
+        );
+        out geom;
+      ''';
+
+      final response = await http.post(
+        Uri.parse(AppConfig.osmBaseUrl),
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: {'data': query},
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode != 200) return [];
+
+      final data = jsonDecode(response.body);
+      final elements = data['elements'] as List? ?? [];
+      final polygons = <ParkingPolygon>[];
+
+      for (final el in elements) {
+        final tags = el['tags'] as Map<String, dynamic>? ?? {};
+        final geometry = el['geometry'] as List?;
+        if (geometry == null || geometry.length < 3) continue;
+
+        final id = '${el['type']}_${el['id']}';
+        final points = geometry.map((g) => LatLng(
+          (g['lat'] as num).toDouble(),
+          (g['lon'] as num).toDouble(),
+        )).toList();
+
+        final amenity = tags['amenity'] as String?;
+        final parking = tags['parking'] as String?;
+        final highway = tags['highway'] as String?;
+        final name = tags['name'] as String?;
+        final fee = tags['fee'] as String?;
+
+        if (amenity == 'parking') {
+          final isPaid = fee == 'yes' || fee == 'true';
+          polygons.add(ParkingPolygon(
+            id: id,
+            points: points,
+            type: 'parking_lot',
+            condition: isPaid ? 'paid' : 'free',
+            canPark: true,
+            name: name ?? parking ?? 'Aparcamiento',
+          ));
+        } else if (highway == 'pedestrian') {
+          polygons.add(ParkingPolygon(
+            id: id,
+            points: points,
+            type: 'pedestrian_zone',
+            condition: 'free',
+            canPark: true,
+            name: name ?? 'Zona peatonal',
+          ));
+        } else if (parking != null) {
+          polygons.add(ParkingPolygon(
+            id: id,
+            points: points,
+            type: 'parking_structure',
+            condition: parking,
+            canPark: true,
+            name: name ?? parking,
+          ));
+        }
+      }
+
+      _polygonCache[key] = polygons;
+      return polygons;
+    } catch (e) {
+      return [];
+    }
   }
 
   Future<List<ParkingZone>> getParkingZones(double lat, double lng, {double radius = 0.005}) async {
@@ -211,10 +314,10 @@ class OsmService {
 
   void _cleanupCacheIfNeeded() {
     if (DateTime.now().difference(_lastCacheCleanup).inMinutes > 15) {
-      _cache.clear(); _zoneCache.clear();
+      _cache.clear(); _zoneCache.clear(); _polygonCache.clear();
       _lastCacheCleanup = DateTime.now();
     }
   }
 
-  void dispose() { _cache.clear(); _zoneCache.clear(); }
+  void dispose() { _cache.clear(); _zoneCache.clear(); _polygonCache.clear(); }
 }

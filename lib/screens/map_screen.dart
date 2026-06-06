@@ -4,9 +4,9 @@ import 'package:latlong2/latlong.dart';
 import '../config/app_config.dart';
 import '../models/parking_spot.dart';
 import '../services/location_service.dart';
+import '../services/osm_service.dart';
 import '../services/parking_logic_service.dart';
 import '../services/local_storage_service.dart';
-import '../services/osm_service.dart';
 import '../widgets/legend_widget.dart';
 
 class MapScreen extends StatefulWidget {
@@ -32,6 +32,7 @@ class _MapScreenState extends State<MapScreen> {
   static const _madrid = LatLng(40.4168, -3.7038);
   LocationResult? _currentLocation;
   List<Marker> _markers = [];
+  List<Polygon> _parkingPolygons = [];
   int _freeCount = 0;
   int _occupiedCount = 0;
   bool _isMonitoring = false;
@@ -52,8 +53,46 @@ class _MapScreenState extends State<MapScreen> {
         widget.parkingLogic.processLocation(loc);
       }
       _updateMarkers();
+      _loadParkingZones();
       _sessionMsg = 'GPS: ${loc.lat.toStringAsFixed(4)}, ${loc.lng.toStringAsFixed(4)}';
       if (mounted) setState(() {});
+    });
+  }
+
+  Future<void> _loadParkingZones() async {
+    if (_currentLocation == null) return;
+    final polygons = await widget.osmService.getParkingPolygons(
+      _currentLocation!.lat,
+      _currentLocation!.lng,
+      radiusMeters: 500,
+    );
+    setState(() {
+      _parkingPolygons = polygons.map((p) {
+        final isPaid = p.condition == 'paid';
+        final isStructure = p.type == 'parking_structure';
+        Color fillColor;
+        if (isPaid) {
+          fillColor = AppConfig.colorWarning.withValues(alpha: 0.25);
+        } else if (isStructure) {
+          fillColor = Colors.blue.withValues(alpha: 0.25);
+        } else {
+          fillColor = AppConfig.colorFree.withValues(alpha: 0.25);
+        }
+        Color borderColor;
+        if (isPaid) {
+          borderColor = AppConfig.colorWarning.withValues(alpha: 0.6);
+        } else if (isStructure) {
+          borderColor = Colors.blue.withValues(alpha: 0.6);
+        } else {
+          borderColor = AppConfig.colorFree.withValues(alpha: 0.6);
+        }
+        return Polygon(
+          points: p.points,
+          color: fillColor,
+          borderColor: borderColor,
+          borderStrokeWidth: 2,
+        );
+      }).toList();
     });
   }
 
@@ -127,13 +166,17 @@ class _MapScreenState extends State<MapScreen> {
           options: MapOptions(
             initialCenter: _madrid,
             initialZoom: 14,
+            maxZoom: 18,
+            minZoom: 10,
             onTap: (_, point) => _onMapTap(point),
           ),
           children: [
             TileLayer(
               urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              maxZoom: 19,
+              maxZoom: 18,
             ),
+            if (_parkingPolygons.isNotEmpty)
+              PolygonLayer(polygons: _parkingPolygons),
             MarkerLayer(markers: _markers),
             if (_currentLocation != null)
               MarkerLayer(markers: [
