@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -8,9 +7,7 @@ import '../services/location_service.dart';
 import '../services/parking_logic_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/osm_service.dart';
-import '../widgets/parking_marker.dart';
 import '../widgets/legend_widget.dart';
-import '../widgets/info_panel.dart';
 
 class MapScreen extends StatefulWidget {
   final LocationService locationService;
@@ -32,159 +29,122 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
-  final List<Marker> _markers = [];
-  final List<Marker> _zoneMarkers = [];
-  final LatLng _madrid = const LatLng(40.4168, -3.7038);
-
-  bool _isMonitoring = false;
-  String _sessionMsg = 'Coche detenido';
-  bool _showLegend = false;
-  LatLng? _currentPosition;
+  static const _madrid = LatLng(40.4168, -3.7038);
+  LocationResult? _currentLocation;
+  List<Marker> _markers = [];
   int _freeCount = 0;
   int _occupiedCount = 0;
+  bool _isMonitoring = false;
+  bool _showLegend = false;
+  String _sessionMsg = 'Esperando GPS...';
 
   @override
   void initState() {
     super.initState();
-    widget.parkingLogic.events?.listen((e) {
-      if (mounted) setState(() => _sessionMsg = e.message);
-    });
-    _loadParkingZones();
+    _startServices();
   }
 
-  Future<void> _loadParkingZones() async {
-    final zones = await widget.osmService.getParkingZones(40.4168, -3.7038, radius: 0.01);
-    if (!mounted) return;
-    for (final z in zones) {
-      _zoneMarkers.add(Marker(
-        point: LatLng(z.lat, z.lng),
-        width: 28, height: 28,
-        child: Container(
-          decoration: BoxDecoration(
-            color: z.canPark
-              ? AppConfig.colorFree.withValues(alpha: 0.55)
-              : AppConfig.colorOccupied.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1.5),
-          ),
-          child: Icon(z.canPark ? Icons.local_parking : Icons.block, color: Colors.white, size: 16),
-        ),
+  Future<void> _startServices() async {
+    await widget.locationService.startMonitoring();
+    widget.locationService.locationStream!.listen((loc) {
+      setState(() => _currentLocation = loc);
+      if (_isMonitoring) {
+        widget.parkingLogic.processLocation(loc);
+      }
+      _updateMarkers();
+      _sessionMsg = 'GPS: ${loc.lat.toStringAsFixed(4)}, ${loc.lng.toStringAsFixed(4)}';
+      if (mounted) setState(() {});
+    });
+  }
+
+  Future<void> _updateMarkers() async {
+    if (_currentLocation == null) return;
+    final spots = await widget.storageService.getNearbySpots(_currentLocation!.lat, _currentLocation!.lng, radiusKm: 2);
+    final markers = <Marker>[];
+    for (final spot in spots) {
+      markers.add(Marker(
+        point: LatLng(spot.lat, spot.lng),
+        width: 20,
+        height: 20,
+        child: _spotMarker(spot),
       ));
     }
-    setState(() {});
-  }
-
-  Future<void> _toggleMonitoring() async {
-    if (_isMonitoring) { _stopMonitoring(); return; }
-    final ok = await widget.locationService.requestPermissions();
-    if (!ok || !mounted) return;
-
-    await widget.parkingLogic.startSession();
-    await widget.locationService.startMonitoring();
-
-    setState(() => _isMonitoring = true);
-
-    widget.locationService.locationStream?.listen((loc) async {
-      _currentPosition = LatLng(loc.lat, loc.lng);
-      final r = await widget.parkingLogic.processLocation(loc);
-      if (r == StateTransitionResult.spotFreed || r == StateTransitionResult.spotOccupied) {
-        _refreshSpots(loc.lat, loc.lng);
-      }
-    });
-  }
-
-  void _stopMonitoring() {
-    widget.locationService.stopMonitoring();
-    widget.parkingLogic.endSession();
     setState(() {
-      _isMonitoring = false;
-      _sessionMsg = 'Monitoreo detenido';
-      _markers.clear();
-      _freeCount = 0;
-      _occupiedCount = 0;
-    });
-  }
-
-  Future<void> _refreshSpots(double lat, double lng) async {
-    final spots = await widget.storageService.getNearbySpots(lat, lng);
-    setState(() {
-      _markers.clear();
+      _markers = markers;
       _freeCount = spots.where((s) => s.isFree).length;
       _occupiedCount = spots.where((s) => s.isOccupied).length;
-      for (final s in spots) { _addMarker(s.lat, s.lng, s.status); }
     });
   }
 
-  void _addMarker(double lat, double lng, SpotStatus status) {
-    _markers.removeWhere((m) => m.point.latitude == lat && m.point.longitude == lng);
-    _markers.add(Marker(
-      point: LatLng(lat, lng),
-      width: 60, height: 55,
-      child: ParkingMarker(
-        status: status,
-        onTap: () => _showSpotInfo(lat, lng, status),
-      ),
-    ));
-  }
-
-  void _showSpotInfo(double lat, double lng, SpotStatus status) async {
-    final restriction = await widget.osmService.getRestriction(lat, lng);
-    if (!mounted) return;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppConfig.colorSurface,
-      builder: (_) => InfoPanel(lat: lat, lng: lng, restriction: restriction, status: status,
-        onFreeSpot: (lat, lng) async {
-          await widget.storageService.reportSpotFree(lat, lng);
-          _addMarker(lat, lng, SpotStatus.free);
-          if (mounted) Navigator.of(context).pop();
-        },
+  Widget _spotMarker(ParkingSpot spot) {
+    final color = spot.isOccupied ? AppConfig.colorOccupied : AppConfig.colorFree;
+    return Container(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: spot.isOccupied ? BorderRadius.circular(4) : const BorderRadius.vertical(top: Radius.circular(10)),
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 6)],
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(children: [
-        Expanded(
-          child: Stack(children: [
-            FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _madrid,
-                initialZoom: 14,
-                onTap: (_, ll) => _showSpotInfo(ll.latitude, ll.longitude, SpotStatus.free),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png',
-                  maxZoom: 18,
-                ),
-                MarkerLayer(markers: _markers),
-                if (_currentPosition != null)
-                  MarkerLayer(markers: [
-                    Marker(point: _currentPosition!, width: 28, height: 28, child: _currentLocDot()),
-                  ]),
-              ],
-            ),
-            _topBar(),
-            if (_showLegend) const Positioned(top: 110, left: 14, child: LegendWidget()),
-          ]),
-        ),
-        _bottomPanel(),
-      ]),
-    );
-  }
-
-  Widget _currentLocDot() {
+  Widget _currentLocationMarker() {
     return Container(
       decoration: BoxDecoration(
         color: Colors.blue.withValues(alpha: 0.9),
         shape: BoxShape.circle,
         border: Border.all(color: Colors.white, width: 3),
+        boxShadow: const [BoxShadow(color: Colors.blue, blurRadius: 8)],
       ),
       child: const Icon(Icons.my_location, color: Colors.white, size: 14),
+    );
+  }
+
+  void _toggleMonitoring() {
+    setState(() {
+      _isMonitoring = !_isMonitoring;
+      _showLegend = _isMonitoring;
+    });
+    if (_isMonitoring) {
+      widget.parkingLogic.startSession();
+    } else {
+      widget.parkingLogic.endSession();
+    }
+  }
+
+  Future<void> _onMapTap(LatLng point) async {
+    await widget.storageService.reportSpotFree(point.latitude, point.longitude);
+    _updateMarkers();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFE8E8E8),
+      body: Stack(children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: _madrid,
+            initialZoom: 14,
+            onTap: (_, point) => _onMapTap(point),
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              maxZoom: 19,
+            ),
+            MarkerLayer(markers: _markers),
+            if (_currentLocation != null)
+              MarkerLayer(markers: [
+                Marker(point: LatLng(_currentLocation!.lat, _currentLocation!.lng), width: 28, height: 28, child: _currentLocationMarker()),
+              ]),
+          ],
+        ),
+        _topBar(),
+        if (_showLegend) const Positioned(top: 110, left: 14, child: LegendWidget()),
+        _bottomPanel(),
+      ]),
     );
   }
 
@@ -206,14 +166,6 @@ class _MapScreenState extends State<MapScreen> {
           const SizedBox(width: 8),
           _pill(_occupiedCount.toString(), 'Ocupados', AppConfig.colorOccupied),
           const SizedBox(width: 8),
-          GestureDetector(
-            onTap: () => setState(() => _showLegend = !_showLegend),
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(10)),
-              child: Icon(_showLegend ? Icons.info : Icons.info_outline, color: AppConfig.colorTextSecondary, size: 20),
-            ),
-          ),
         ]),
       ),
     );
@@ -236,8 +188,10 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _bottomPanel() {
-    return Container(
-      padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).padding.bottom + 16),
+    return Positioned(
+      bottom: 0, left: 0, right: 0,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).padding.bottom + 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [AppConfig.colorBackground.withValues(alpha: 0), AppConfig.colorBackground.withValues(alpha: 0.95)],
@@ -278,15 +232,17 @@ class _MapScreenState extends State<MapScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                 elevation: 8,
               ),
-              ),
             ),
-          ]),
+          ),
+        ]),
+      ),
     );
   }
 
   @override
   void dispose() {
-    widget.parkingLogic.events?.drain();
+    widget.locationService.stopMonitoring();
+    widget.parkingLogic.dispose();
     super.dispose();
   }
 }
